@@ -77,6 +77,7 @@ Embed them in this README once generated, e.g.:
 ```markdown
 ![Predictions](artifacts/test_predictions.png)
 ![Forecast](artifacts/future_forecast.png)
+![Training history](artifacts/training_history.png)
 ```
 
 **Key finding.** Across four framings — price regression, return regression
