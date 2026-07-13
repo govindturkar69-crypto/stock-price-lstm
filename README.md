@@ -31,6 +31,21 @@ If pip cannot find a `torch` wheel for your Python, grab the install command fro
 https://pytorch.org/get-started/locally/ (a CPU build is fine), then re-run
 `pip install -r requirements.txt`.
 
+## 🖥️ Web app (Streamlit)
+
+An interactive UI wraps the whole pipeline — pick a ticker, tune settings, and
+train + evaluate + forecast from the browser.
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+It opens at http://localhost:8501 with price history, a training curve,
+actual-vs-predicted charts, honest price/return/direction metrics, and a future
+forecast. Deploy free on [Streamlit Community Cloud](https://streamlit.io/cloud)
+by pointing it at your GitHub repo and `app.py`.
+
 ## ✨ Features
 
 - **Live data** via `yfinance` (any ticker), with a synthetic fallback so it runs
@@ -77,7 +92,6 @@ Embed them in this README once generated, e.g.:
 ```markdown
 ![Predictions](artifacts/test_predictions.png)
 ![Forecast](artifacts/future_forecast.png)
-![Training history](artifacts/training_history.png)
 ```
 
 **Key finding.** Across four framings — price regression, return regression
@@ -97,6 +111,7 @@ stock-lstm/
 ├── requirements.txt
 ├── config.yaml
 ├── .gitignore
+├── app.py                  # Streamlit web app
 ├── main.py                 # regression pipeline
 ├── classify.py             # direction classifier
 └── src/
@@ -135,7 +150,7 @@ stock-lstm/
 
 ## 🛠 Tech stack
 
-Python · PyTorch · NumPy · pandas · scikit-learn · yfinance · matplotlib
+Python · PyTorch · Streamlit · NumPy · pandas · scikit-learn · yfinance · matplotlib
 
 ## ⚠️ Disclaimer
 
