@@ -1,0 +1,56 @@
+data:
+  ticker: AAPL
+  start: '2015-01-01'
+  end: null
+  interval: 1d
+  target: Close
+  target_mode: log_return
+  exclude_features:
+  - Close
+  synthetic_fallback: true
+features:
+  stationary: true
+  sma_windows:
+  - 10
+  - 20
+  - 50
+  return_windows:
+  - 1
+  - 5
+  - 10
+  - 20
+  rsi_period: 14
+  bollinger_period: 20
+  atr_period: 14
+  vol_window: 20
+window:
+  lookback: 60
+  horizon: 5
+split:
+  test_size: 0.15
+  val_size: 0.15
+model:
+  lstm_units:
+  - 128
+  - 64
+  dropout: 0.3
+  recurrent_dropout: 0.0
+  dense_units:
+  - 32
+  bidirectional: false
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  grad_clip: 1.0
+  loss: huber
+train:
+  epochs: 100
+  batch_size: 32
+  patience: 15
+  reduce_lr_patience: 6
+  shuffle: false
+walk_forward:
+  enabled: true
+  n_splits: 4
+output:
+  dir: artifacts
+  seed: 42
