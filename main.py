@@ -17,7 +17,7 @@ def parse_args():
     p.add_argument('--config', default='config.yaml')
     p.add_argument('--ticker', default=None)
     p.add_argument('--epochs', type=int, default=None)
-    p.add_argument('--target-mode', choices=['log_return', 'price'], default=None)
+    p.add_argument('--target-mode', choices=['log_return', 'price', 'volatility'], default=None)
     p.add_argument('--horizon', type=int, default=None, help='Forward return horizon in days')
     p.add_argument('--forecast-days', type=int, default=30)
     p.add_argument('--no-walk-forward', action='store_true')
@@ -31,6 +31,8 @@ def apply_overrides(cfg, args):
         cfg['train']['epochs'] = args.epochs
     if args.target_mode:
         cfg['data']['target_mode'] = args.target_mode
+    if cfg['data'].get('target_mode') == 'volatility' and cfg['window']['horizon'] < 2:
+        cfg['window']['horizon'] = 5
     if args.horizon:
         cfg['window']['horizon'] = args.horizon
     if args.no_walk_forward:
@@ -94,15 +96,18 @@ def main():
         wf = walk_forward(feat, cfg, _fold_metrics)
         print(wf.round(4).to_string())
         report['walk_forward_return_space'] = wf.round(6).to_dict(orient='index')
-    print(f'[6/6] Forecasting {args.forecast_days} days & plotting ...')
-    future = forecast_future(model, prep, steps=args.forecast_days)
-    future_idx = pd.bdate_range(prep.test_index[-1], periods=args.forecast_days + 1)[1:]
     plots.plot_history(history, out_dir)
     plots.plot_predictions(prep.test_index, y_true, y_pred, out_dir)
-    plots.plot_forecast(prep.test_index, y_true, future_idx, future, out_dir)
+    if mode == 'volatility':
+        print('[6/6] Volatility mode: skipping recursive price forecast (not applicable).')
+    else:
+        print(f'[6/6] Forecasting {args.forecast_days} days & plotting ...')
+        future = forecast_future(model, prep, steps=args.forecast_days)
+        future_idx = pd.bdate_range(prep.test_index[-1], periods=args.forecast_days + 1)[1:]
+        plots.plot_forecast(prep.test_index, y_true, future_idx, future, out_dir)
+        pd.DataFrame({'date': future_idx, 'forecast': future}).to_csv(os.path.join(out_dir, 'forecast.csv'), index=False)
     with open(os.path.join(out_dir, 'report.json'), 'w') as f:
         json.dump(report, f, indent=2, default=float)
-    pd.DataFrame({'date': future_idx, 'forecast': future}).to_csv(os.path.join(out_dir, 'forecast.csv'), index=False)
     print(f"\nDone. Artifacts written to '{out_dir}/':")
     for name in sorted(os.listdir(out_dir)):
         print('  -', name)

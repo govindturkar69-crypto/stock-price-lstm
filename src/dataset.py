@@ -48,6 +48,12 @@ def prepare(df: pd.DataFrame, cfg) -> Prepared:
     if mode == 'log_return':
         target_raw = np.full(n, np.nan, dtype='float64')
         target_raw[horizon:] = np.log(close[horizon:] / close[:-horizon])
+    elif mode == 'volatility':
+        lr = np.full(n, np.nan, dtype='float64')
+        lr[1:] = np.log(close[1:] / close[:-1])
+        target_raw = np.full(n, np.nan, dtype='float64')
+        for t in range(horizon, n):
+            target_raw[t] = np.std(lr[t - horizon + 1:t + 1])
     else:
         target_raw = close.copy()
     n_test = int(n * test_size)

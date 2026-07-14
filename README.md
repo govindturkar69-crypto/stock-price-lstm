@@ -39,6 +39,17 @@ avoids that trap:
 That intellectual honesty — plus a clean, deployed, well-engineered pipeline — is
 the point.
 
+
+### 🎲 Bonus: volatility mode
+
+Direction isn't predictable — but **volatility is** (big moves cluster). Set the target to
+`volatility` to predict the *size* of upcoming moves; the same LSTM then shows a **positive**
+IC/R², proving it learns a genuinely predictable signal.
+
+```bash
+python main.py --target-mode volatility --horizon 5   # or pick 'volatility' in the dashboard sidebar
+```
+
 ## ✨ Features
 
 - **Live data** via `yfinance` — any ticker: US (`AAPL`, `MSFT`) or Indian

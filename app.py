@@ -113,13 +113,15 @@ def _permutation_importance(model, prep, n_repeats: int = 2) -> list:
 
 
 @st.cache_data(show_spinner=False)
-def train_and_eval(ticker, start, horizon, lookback, epochs) -> dict:
+def train_and_eval(ticker, start, horizon, lookback, epochs, target_mode="log_return") -> dict:
     """Train + evaluate one horizon; return a picklable results dict."""
     fetched = fetch_prices(ticker, start)
     if not fetched["ok"]:
         return {"ok": False, "err": fetched["err"]}
+    if target_mode == "volatility" and int(horizon) < 2:
+        horizon = 5  # realized-vol target needs a multi-day window
     cfg = load_config("config.yaml")
-    cfg["data"].update({"ticker": ticker, "start": start, "synthetic_fallback": False})
+    cfg["data"].update({"ticker": ticker, "start": start, "synthetic_fallback": False, "target_mode": target_mode})
     cfg["window"].update({"horizon": int(horizon), "lookback": int(lookback)})
     cfg["train"]["epochs"] = int(epochs)
     cfg["walk_forward"]["enabled"] = False
@@ -131,7 +133,7 @@ def train_and_eval(ticker, start, horizon, lookback, epochs) -> dict:
     true_ret, pred_ret = predict_returns(model, prep)
     ctx = feat["Close"].iloc[-300:]
     return {
-        "ok": True, "source": fetched["source"], "ts": fetched["ts"],
+        "ok": True, "source": fetched["source"], "ts": fetched["ts"], "mode": target_mode,
         "n_features": len(prep.feature_names),
         "price": regression_metrics(y_true, y_pred), "naive": naive_baseline(y_true),
         "ret": return_metrics(true_ret, pred_ret), "dir": directional_metrics(true_ret, pred_ret),
@@ -144,13 +146,15 @@ def train_and_eval(ticker, start, horizon, lookback, epochs) -> dict:
 
 
 @st.cache_data(show_spinner=False)
-def run_walk_forward(ticker, start, horizon, lookback, epochs) -> dict:
+def run_walk_forward(ticker, start, horizon, lookback, epochs, target_mode="log_return") -> dict:
     """Expanding-window walk-forward; per-fold return-space skill."""
     fetched = fetch_prices(ticker, start)
     if not fetched["ok"]:
         return {"ok": False, "err": fetched["err"]}
+    if target_mode == "volatility" and int(horizon) < 2:
+        horizon = 5
     cfg = load_config("config.yaml")
-    cfg["data"].update({"ticker": ticker, "start": start, "synthetic_fallback": False})
+    cfg["data"].update({"ticker": ticker, "start": start, "synthetic_fallback": False, "target_mode": target_mode})
     cfg["window"].update({"horizon": int(horizon), "lookback": int(lookback)})
     cfg["train"]["epochs"] = int(epochs)
     set_seed(cfg["output"]["seed"])
@@ -222,6 +226,16 @@ def chart_predictions(res, height=380):
     return _layout(fig, height)
 
 
+def chart_volatility(res, height=380):
+    """Actual vs predicted realized volatility (volatility target mode)."""
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=res["test_dates"], y=res["test_true"], name="Actual volatility",
+                             line=dict(color=ACCENT, width=2)))
+    fig.add_trace(go.Scatter(x=res["test_dates"], y=res["test_pred"], name="Predicted volatility",
+                             line=dict(color=GREEN, width=2, dash="dash")))
+    return _layout(fig, height, "Realized volatility — actual vs predicted")
+
+
 def chart_bar(x, y, color_by_sign=False, height=320, title="", ylab=""):
     colors = ([GREEN if v >= 0 else RED for v in y] if color_by_sign else ACCENT)
     fig = go.Figure(go.Bar(x=x, y=y, marker_color=colors))
@@ -262,6 +276,9 @@ def render_sidebar() -> dict:
         st.markdown("---")
         st.markdown("**Model settings**")
         start = st.text_input("History start", load_config("config.yaml")["data"]["start"])
+        target_mode = st.selectbox("Target", ["log_return", "volatility"], index=0,
+            help="log_return = predict direction/returns (near-random, hard). "
+                 "volatility = predict how big the moves will be (genuinely predictable).")
         horizon = st.radio("Prediction horizon", [1, 5], horizontal=True,
                            format_func=lambda d: f"{d}-day")
         lookback = st.slider("Lookback window", 20, 120, 60, step=10)
@@ -272,14 +289,20 @@ def render_sidebar() -> dict:
         if st.session_state.get("last_ts"):
             st.caption(f"Last fetched: {st.session_state['last_ts']}")
     return {"ticker": ticker, "start": start, "horizon": int(horizon),
-            "lookback": int(lookback), "epochs": int(epochs), "run": run}
+            "lookback": int(lookback), "epochs": int(epochs),
+            "target_mode": target_mode, "run": run}
 
 
 def render_metrics(res):
     st.markdown('<div class="sec">🎯 Performance metrics</div>', unsafe_allow_html=True)
-    st.caption("Daily returns are near a random walk — read these honestly. IC/R² near 0 "
-               "and directional accuracy near the base rate mean *no edge*, which is the "
-               "expected, truthful result (not a failure).")
+    if res.get("mode") == "volatility":
+        st.caption("Volatility target: IC and R² here measure how well the model predicts the "
+                   "SIZE of upcoming moves. Volatility clusters, so a positive score is expected "
+                   "and demonstrates the model learns a genuinely predictable signal.")
+    else:
+        st.caption("Daily returns are near a random walk — read these honestly. IC/R² near 0 "
+                   "and directional accuracy near the base rate mean *no edge*, which is the "
+                   "expected, truthful result (not a failure).")
     rm, dm, pm, nv = res["ret"], res["dir"], res["price"], res["naive"]
     c = st.columns(4)
     c[0].metric("Information Coefficient", f"{rm['IC_corr']:+.3f}", f"{rm['IC_corr']:+.3f} vs 0",
@@ -347,7 +370,7 @@ def main():
     st.session_state["last_ts"] = fetched["ts"]
 
     with st.spinner(f"🧠 Training LSTM on {p['ticker']} ({p['horizon']}-day horizon)..."):
-        res = train_and_eval(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"])
+        res = train_and_eval(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"], p["target_mode"])
     if not res["ok"]:
         print(f"[train-error] {p['ticker']}: {res['err']}")  # server log only
         st.error("❌ Model training failed for this input. Try a different ticker or date range.")
@@ -361,8 +384,15 @@ def main():
     s[3].metric("Fetched at", fetched["ts"].split(",")[-1].strip())
 
     st.divider()
-    st.markdown('<div class="sec">📊 Actual vs Predicted</div>', unsafe_allow_html=True)
-    st.plotly_chart(chart_predictions(res), width='stretch')
+    if p["target_mode"] == "volatility":
+        st.markdown('<div class="sec">📊 Volatility — Actual vs Predicted</div>', unsafe_allow_html=True)
+        st.info("📐 Volatility mode: metrics below now measure **volatility** prediction "
+                "(how big moves will be) — unlike direction, this is genuinely predictable, "
+                "so expect a **positive** IC / R².")
+        st.plotly_chart(chart_volatility(res), width='stretch')
+    else:
+        st.markdown('<div class="sec">📊 Actual vs Predicted</div>', unsafe_allow_html=True)
+        st.plotly_chart(chart_predictions(res), width='stretch')
 
     st.divider()
     render_metrics(res)
@@ -373,8 +403,8 @@ def main():
         st.session_state["cmp"] = True
     if st.session_state.get("cmp"):
         with st.spinner("Training both horizons..."):
-            r1 = train_and_eval(p["ticker"], p["start"], 1, p["lookback"], p["epochs"])
-            r5 = train_and_eval(p["ticker"], p["start"], 5, p["lookback"], p["epochs"])
+            r1 = train_and_eval(p["ticker"], p["start"], 1, p["lookback"], p["epochs"], p["target_mode"])
+            r5 = train_and_eval(p["ticker"], p["start"], 5, p["lookback"], p["epochs"], p["target_mode"])
         if r1["ok"] and r5["ok"]:
             cc = st.columns(2)
             cc[0].plotly_chart(chart_bar(["1-day", "5-day"], [r1["ret"]["IC_corr"], r5["ret"]["IC_corr"]],
@@ -393,7 +423,7 @@ def main():
         st.session_state["wf"] = True
     if st.session_state.get("wf"):
         with st.spinner("Running walk-forward folds (trains several models)..."):
-            wf = run_walk_forward(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"])
+            wf = run_walk_forward(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"], p["target_mode"])
         if wf["ok"]:
             st.plotly_chart(chart_bar([f"Fold {f}" for f in wf["folds"]], wf["ic"],
                             color_by_sign=True, title="IC per fold", ylab="IC"), width='stretch')

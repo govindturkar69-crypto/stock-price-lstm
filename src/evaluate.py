@@ -54,7 +54,7 @@ def directional_metrics(true_ret: np.ndarray, pred_ret: np.ndarray) -> dict[str,
 
 def predict_returns(model, prep) -> tuple[np.ndarray, np.ndarray]:
     pred_ret = invert(prep.target_scaler, torch_predict(model, prep.X_test))
-    if prep.target_mode == 'log_return':
+    if prep.target_mode in ('log_return', 'volatility'):
         true_ret = invert(prep.target_scaler, prep.y_test)
     else:
         true_ret = np.log(prep.test_true_price / prep.test_anchor)
