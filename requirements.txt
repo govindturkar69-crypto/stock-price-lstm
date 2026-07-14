@@ -5,5 +5,5 @@ scikit-learn>=1.3
 torch>=2.2
 matplotlib>=3.7
 PyYAML>=6.0
-streamlit>=1.30
+streamlit>=1.40
 plotly>=5.18

@@ -268,7 +268,7 @@ def render_sidebar() -> dict:
         epochs = st.slider("Max epochs", 5, 100, 30, step=5,
                            help="Fewer = faster demo; early stopping still applies.")
         st.markdown("---")
-        run = st.button("🚀 Run Prediction", type="primary", use_container_width=True)
+        run = st.button("🚀 Run Prediction", type="primary", width='stretch')
         if st.session_state.get("last_ts"):
             st.caption(f"Last fetched: {st.session_state['last_ts']}")
     return {"ticker": ticker, "start": start, "horizon": int(horizon),
@@ -362,7 +362,7 @@ def main():
 
     st.divider()
     st.markdown('<div class="sec">📊 Actual vs Predicted</div>', unsafe_allow_html=True)
-    st.plotly_chart(chart_predictions(res), use_container_width=True)
+    st.plotly_chart(chart_predictions(res), width='stretch')
 
     st.divider()
     render_metrics(res)
@@ -379,9 +379,9 @@ def main():
             cc = st.columns(2)
             cc[0].plotly_chart(chart_bar(["1-day", "5-day"], [r1["ret"]["IC_corr"], r5["ret"]["IC_corr"]],
                                color_by_sign=True, title="Information Coefficient", ylab="IC"),
-                               use_container_width=True)
+                               width='stretch')
             cc[1].plotly_chart(chart_bar(["1-day", "5-day"], [r1["dir"]["DirAcc_pct"], r5["dir"]["DirAcc_pct"]],
-                               title="Directional accuracy (%)", ylab="%"), use_container_width=True)
+                               title="Directional accuracy (%)", ylab="%"), width='stretch')
     else:
         st.caption("Click to train both horizons and compare their skill side by side.")
 
@@ -396,7 +396,7 @@ def main():
             wf = run_walk_forward(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"])
         if wf["ok"]:
             st.plotly_chart(chart_bar([f"Fold {f}" for f in wf["folds"]], wf["ic"],
-                            color_by_sign=True, title="IC per fold", ylab="IC"), use_container_width=True)
+                            color_by_sign=True, title="IC per fold", ylab="IC"), width='stretch')
             st.caption(f"Mean IC across folds: **{np.mean(wf['ic']):+.3f}** "
                        "(near 0 with sign flips → no reliable edge).")
     else:
@@ -411,7 +411,7 @@ def main():
             clf = run_classifier(p["ticker"], p["start"], p["horizon"], p["lookback"], p["epochs"])
         if clf["ok"]:
             cc = st.columns([1, 1])
-            cc[0].plotly_chart(chart_confusion(clf["cm"]), use_container_width=True)
+            cc[0].plotly_chart(chart_confusion(clf["cm"]), width='stretch')
             cc[1].metric("ROC-AUC", f"{clf['roc_auc']:.3f}", help="0.5 = no skill")
             cc[1].metric("Balanced accuracy", f"{clf['balanced_acc']*100:.1f}%", help="50% = no skill")
             cc[1].caption("Both recalls > 0 = balancing worked; AUC ~0.5 = little directional signal.")
@@ -424,7 +424,7 @@ def main():
     names = [n for n, _ in res["importance"]][::-1]
     vals = [v for _, v in res["importance"]][::-1]
     st.plotly_chart(_layout(go.Figure(go.Bar(x=vals, y=names, orientation="h",
-                    marker_color=ACCENT)), 30 + 26 * len(names)), use_container_width=True)
+                    marker_color=ACCENT)), 30 + 26 * len(names)), width='stretch')
 
     st.divider()
     st.markdown('<div class="sec">⬇️ Download predictions</div>', unsafe_allow_html=True)
