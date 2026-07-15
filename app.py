@@ -30,8 +30,8 @@ from src.classify_data import prepare_classification
 from src.classify_train import train_classifier, predict_proba
 
 REPO_URL = "https://github.com/govindturkar69-crypto/stock-price-lstm"
-ACCENT, GREEN, RED, MUTED = "#3b82f6", "#22c55e", "#ef4444", "#8b97a8"
-CARD, BORDER = "#151b28", "#232c3d"
+ACCENT, GREEN, RED, MUTED = "#2563eb", "#16a34a", "#dc2626", "#64748b"
+CARD, BORDER, INK = "#ffffff", "#e5e9f0", "#0f172a"
 POPULAR = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "TSLA", "SPY",
            "TCS.NS", "RELIANCE.NS", "INFY.NS", "HDFCBANK.NS"]
 
@@ -55,25 +55,28 @@ st.set_page_config(page_title="LSTM Stock Predictor", page_icon="📈",
 
 
 def inject_css() -> None:
-    """Inject custom CSS for a clean dark financial-dashboard aesthetic."""
+    """Inject custom CSS for a clean, light financial-dashboard aesthetic."""
     st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
     html, body, [class*="css"] {{ font-family:'Inter',sans-serif; }}
+    .stApp {{ background:#f5f7fa; }}
     #MainMenu, footer {{ visibility:hidden; }}
     .block-container {{ padding-top:1.4rem; padding-bottom:2rem; max-width:1320px; }}
-    .hero {{ background:linear-gradient(120deg,#111a2e 0%,#0b0f19 65%);
-      border:1px solid {BORDER}; border-radius:18px; padding:24px 30px; margin-bottom:8px; }}
-    .hero h1 {{ margin:0; font-size:29px; font-weight:800; color:#f4f7fb; letter-spacing:-.4px; }}
+    section[data-testid="stSidebar"] {{ background:#ffffff; border-right:1px solid {BORDER}; }}
+    .hero {{ background:linear-gradient(120deg,#eef4ff 0%,#ffffff 70%);
+      border:1px solid {BORDER}; border-radius:18px; padding:24px 30px; margin-bottom:8px;
+      box-shadow:0 1px 3px rgba(15,23,42,.05); }}
+    .hero h1 {{ margin:0; font-size:29px; font-weight:800; color:{INK}; letter-spacing:-.4px; }}
     .hero p {{ margin:6px 0 0; color:{MUTED}; font-size:14px; max-width:840px; }}
-    .badge {{ display:inline-block; background:{ACCENT}22; color:{ACCENT}; border:1px solid {ACCENT}55;
+    .badge {{ display:inline-block; background:{ACCENT}14; color:{ACCENT}; border:1px solid {ACCENT}44;
       padding:3px 10px; border-radius:999px; font-size:12px; font-weight:600; margin:10px 6px 0 0; }}
-    .sec {{ font-size:19px; font-weight:700; margin:4px 0 2px; color:#eef2f8;
+    .sec {{ font-size:19px; font-weight:700; margin:4px 0 2px; color:{INK};
       border-left:3px solid {ACCENT}; padding-left:10px; }}
     .verdict {{ border-radius:14px; padding:14px 20px; font-weight:600; margin-top:6px; border:1px solid; }}
     .stButton>button {{ border-radius:10px; font-weight:700; height:44px; }}
     div[data-testid="stMetric"] {{ background:{CARD}; border:1px solid {BORDER};
-      border-radius:14px; padding:14px 16px; }}
+      border-radius:14px; padding:14px 16px; box-shadow:0 1px 3px rgba(15,23,42,.04); }}
     </style>""", unsafe_allow_html=True)
 
 
@@ -132,8 +135,13 @@ def train_and_eval(ticker, start, horizon, lookback, epochs, target_mode="log_re
     y_true, y_pred = predict_prices(model, prep)
     true_ret, pred_ret = predict_returns(model, prep)
     ctx = feat["Close"].iloc[-300:]
+    ohlc = fetched["df"].iloc[-180:]
     return {
         "ok": True, "source": fetched["source"], "ts": fetched["ts"], "mode": target_mode,
+        "ohlc_dates": [d.strftime("%Y-%m-%d") for d in ohlc.index],
+        "o": ohlc["Open"].tolist(), "h": ohlc["High"].tolist(),
+        "l": ohlc["Low"].tolist(), "c": ohlc["Close"].tolist(),
+        "lstm_units": cfg["model"]["lstm_units"], "lookback": int(lookback), "horizon": int(horizon),
         "n_features": len(prep.feature_names),
         "price": regression_metrics(y_true, y_pred), "naive": naive_baseline(y_true),
         "ret": return_metrics(true_ret, pred_ret), "dir": directional_metrics(true_ret, pred_ret),
@@ -204,12 +212,12 @@ def run_classifier(ticker, start, horizon, lookback, epochs) -> dict:
 
 
 def _layout(fig, height, title=""):
-    fig.update_layout(template="plotly_dark", height=height, title=title,
+    fig.update_layout(template="plotly_white", height=height, title=title,
                       margin=dict(l=10, r=10, t=40, b=10),
                       paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       legend=dict(orientation="h", y=1.02, x=0),
                       xaxis=dict(gridcolor=BORDER), yaxis=dict(gridcolor=BORDER),
-                      font=dict(color="#c8d2e0"))
+                      font=dict(color="#334155"))
     return fig
 
 
@@ -249,6 +257,36 @@ def chart_confusion(cm, height=340):
                                y=[f"True {l}" for l in labels], colorscale="Blues",
                                text=cm, texttemplate="%{text}", showscale=False))
     return _layout(fig, height)
+
+
+def chart_candlestick(res, height=380):
+    """OHLC candlestick of the recent price history."""
+    fig = go.Figure(go.Candlestick(x=res["ohlc_dates"], open=res["o"], high=res["h"],
+                                   low=res["l"], close=res["c"],
+                                   increasing_line_color=GREEN, decreasing_line_color=RED))
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    return _layout(fig, height)
+
+
+def chart_scatter(res, height=340):
+    """Calibration scatter: predicted vs actual with the ideal y=x line."""
+    t, pr = res["test_true"], res["test_pred"]
+    lo, hi = min(min(t), min(pr)), max(max(t), max(pr))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=t, y=pr, mode="markers", name="samples",
+                             marker=dict(color=ACCENT, size=5, opacity=0.5)))
+    fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", name="perfect",
+                             line=dict(color=MUTED, dash="dash")))
+    fig.update_xaxes(title="Actual"); fig.update_yaxes(title="Predicted")
+    return _layout(fig, height, "Calibration: predicted vs actual")
+
+
+def chart_residuals(res, height=340):
+    """Histogram of prediction errors (predicted - actual)."""
+    resid = np.array(res["test_pred"]) - np.array(res["test_true"])
+    fig = go.Figure(go.Histogram(x=resid, marker_color=ACCENT, nbinsx=40))
+    fig.update_xaxes(title="Prediction error"); fig.update_yaxes(title="Count")
+    return _layout(fig, height, "Residual distribution")
 
 
 def render_header():
@@ -384,6 +422,13 @@ def main():
     s[3].metric("Fetched at", fetched["ts"].split(",")[-1].strip())
 
     st.divider()
+    st.markdown('<div class="sec">🕯️ Price history (candlestick)</div>', unsafe_allow_html=True)
+    st.plotly_chart(chart_candlestick(res), width='stretch')
+    arch = " \u2192 ".join(str(u) for u in res["lstm_units"])
+    st.caption(f"🧠 Model: stacked LSTM [{arch}] \u00b7 lookback {res['lookback']} days \u00b7 "
+               f"horizon {res['horizon']} \u00b7 target = {res['mode']}")
+
+    st.divider()
     if p["target_mode"] == "volatility":
         st.markdown('<div class="sec">📊 Volatility — Actual vs Predicted</div>', unsafe_allow_html=True)
         st.info("📐 Volatility mode: metrics below now measure **volatility** prediction "
@@ -396,6 +441,12 @@ def main():
 
     st.divider()
     render_metrics(res)
+
+    st.divider()
+    st.markdown('<div class="sec">🔍 Prediction diagnostics</div>', unsafe_allow_html=True)
+    dcol = st.columns(2)
+    dcol[0].plotly_chart(chart_scatter(res), width='stretch')
+    dcol[1].plotly_chart(chart_residuals(res), width='stretch')
 
     st.divider()
     st.markdown('<div class="sec">⚖️ Horizon comparison (1-day vs 5-day)</div>', unsafe_allow_html=True)
