@@ -61,3 +61,25 @@ def torch_predict(model: nn.Module, X: np.ndarray, device: torch.device | None=N
         chunk = xb[i:i + batch_size].to(device)
         preds.append(model(chunk).cpu().numpy().reshape(-1))
     return np.concatenate(preds)
+
+
+@torch.no_grad()
+def mc_predict(model, X, n_samples=30, batch_size=256):
+    """Monte-Carlo Dropout: keep dropout layers active and run n stochastic
+    forward passes. Returns (mean, std) over samples for each row."""
+    if len(X) == 0:
+        return (np.empty(0), np.empty(0))
+    device = next(model.parameters()).device
+    model.eval()
+    for m in model.modules():
+        if m.__class__.__name__.startswith('Dropout'):
+            m.train()
+    xb = torch.as_tensor(np.asarray(X, dtype='float32'))
+    samples = []
+    for _ in range(n_samples):
+        out = []
+        for i in range(0, len(xb), batch_size):
+            out.append(model(xb[i:i + batch_size].to(device)).cpu().numpy().reshape(-1))
+        samples.append(np.concatenate(out))
+    P = np.stack(samples)
+    return (P.mean(0), P.std(0))

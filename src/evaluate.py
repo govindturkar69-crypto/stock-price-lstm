@@ -92,3 +92,52 @@ def walk_forward(df, cfg: dict[str, Any], build_and_train) -> pd.DataFrame:
         metrics['fold'] = k
         rows.append(metrics)
     return pd.DataFrame(rows).set_index('fold')
+
+
+def backtest(true_ret, pred_ret, cost=0.0005):
+    """Long/flat strategy: hold when predicted return > 0. Returns equity curves
+    and stats vs buy-and-hold, net of a per-turnover transaction cost."""
+    tr = np.asarray(true_ret, dtype=float)
+    pr = np.asarray(pred_ret, dtype=float)
+    simple = np.exp(tr) - 1.0
+    pos = (pr > 0).astype(float)
+    turnover = np.abs(np.diff(np.concatenate([[0.0], pos])))
+    strat = pos * simple - cost * turnover
+    eq_s = np.cumprod(1.0 + strat)
+    eq_b = np.cumprod(1.0 + simple)
+
+    def _sharpe(x):
+        x = np.asarray(x, dtype=float)
+        return float(np.mean(x) / (np.std(x) + 1e-9) * np.sqrt(252))
+
+    return {
+        'eq_strategy': eq_s.tolist(), 'eq_buyhold': eq_b.tolist(),
+        'ret_strategy': float(eq_s[-1] - 1.0), 'ret_buyhold': float(eq_b[-1] - 1.0),
+        'sharpe_strategy': _sharpe(strat), 'sharpe_buyhold': _sharpe(simple),
+    }
+
+
+def rolling_ic(true_ret, pred_ret, window=21):
+    """Rolling information coefficient (correlation) over a moving window."""
+    t = np.asarray(true_ret, dtype=float)
+    p = np.asarray(pred_ret, dtype=float)
+    out = []
+    for i in range(len(t)):
+        if i < window - 1:
+            out.append(np.nan); continue
+        a, b = t[i - window + 1:i + 1], p[i - window + 1:i + 1]
+        out.append(float(np.corrcoef(a, b)[0, 1]) if a.std() > 0 and b.std() > 0 else np.nan)
+    return out
+
+
+def uncertainty_to_price(prep, mc_mean, mc_std, z=1.96):
+    """Map MC-Dropout mean/std (scaled target) to price-space confidence bands."""
+    sc = float(prep.target_scaler.scale_[0]); mn = float(prep.target_scaler.mean_[0])
+    mean_t = np.asarray(mc_mean) * sc + mn
+    std_t = np.asarray(mc_std) * sc
+    if prep.target_mode == 'log_return':
+        lo = prep.test_anchor * np.exp(mean_t - z * std_t)
+        hi = prep.test_anchor * np.exp(mean_t + z * std_t)
+    else:
+        lo = mean_t - z * std_t; hi = mean_t + z * std_t
+    return (lo.tolist(), hi.tolist())

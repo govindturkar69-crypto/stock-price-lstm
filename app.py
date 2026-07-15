@@ -21,10 +21,11 @@ from src.data import load_prices
 from src.features import add_features
 from src.dataset import prepare
 from src.train import train_model
-from src.model import torch_predict
+from src.model import torch_predict, mc_predict
 from src.evaluate import (
     predict_prices, predict_returns, regression_metrics,
     return_metrics, directional_metrics, naive_baseline, walk_forward,
+    backtest, rolling_ic, uncertainty_to_price,
 )
 from src.classify_data import prepare_classification
 from src.classify_train import train_classifier, predict_proba
@@ -134,6 +135,9 @@ def train_and_eval(ticker, start, horizon, lookback, epochs, target_mode="log_re
     model, history = train_model(prep, cfg, cfg["output"]["dir"])
     y_true, y_pred = predict_prices(model, prep)
     true_ret, pred_ret = predict_returns(model, prep)
+    mc_mean, mc_std = mc_predict(model, prep.X_test, n_samples=30)
+    band_lo, band_hi = uncertainty_to_price(prep, mc_mean, mc_std)
+    bt = None if target_mode == "volatility" else backtest(true_ret, pred_ret)
     ctx = feat["Close"].iloc[-300:]
     ohlc = fetched["df"].iloc[-180:]
     return {
@@ -148,6 +152,8 @@ def train_and_eval(ticker, start, horizon, lookback, epochs, target_mode="log_re
         "ctx_dates": [d.strftime("%Y-%m-%d") for d in ctx.index], "ctx_close": ctx.values.tolist(),
         "test_dates": [d.strftime("%Y-%m-%d") for d in prep.test_index],
         "test_true": y_true.tolist(), "test_pred": y_pred.tolist(),
+        "band_lo": band_lo, "band_hi": band_hi,
+        "true_ret": true_ret.tolist(), "pred_ret": pred_ret.tolist(), "backtest": bt,
         "history": {k: list(map(float, v)) for k, v in history.history.items()},
         "importance": _permutation_importance(model, prep),
     }
@@ -211,6 +217,19 @@ def run_classifier(ticker, start, horizon, lookback, epochs) -> dict:
             "balanced_acc": (up_rec + dn_rec) / 2, "roc_auc": auc}
 
 
+@st.cache_data(show_spinner=False)
+def run_multi_ticker(tickers, start, horizon, lookback, epochs, target_mode="log_return") -> list:
+    """Train a quick model per ticker; return IC + directional accuracy for each."""
+    rows = []
+    for tk in tickers:
+        r = train_and_eval(tk, start, horizon, lookback, epochs, target_mode)
+        if r.get("ok"):
+            rows.append({"ticker": tk, "IC": r["ret"]["IC_corr"], "DirAcc": r["dir"]["DirAcc_pct"]})
+        else:
+            rows.append({"ticker": tk, "IC": float("nan"), "DirAcc": float("nan")})
+    return rows
+
+
 def _layout(fig, height, title=""):
     fig.update_layout(template="plotly_white", height=height, title=title,
                       margin=dict(l=10, r=10, t=40, b=10),
@@ -228,6 +247,12 @@ def chart_predictions(res, height=380):
                              line=dict(color=ACCENT, width=2)))
     fig.add_trace(go.Scatter(x=res["test_dates"], y=res["test_pred"], name="Predicted (test)",
                              line=dict(color=GREEN, width=2, dash="dash")))
+    if res.get("band_lo"):
+        fig.add_trace(go.Scatter(x=res["test_dates"], y=res["band_hi"], line=dict(width=0),
+                                 showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=res["test_dates"], y=res["band_lo"], fill="tonexty",
+                                 fillcolor="rgba(37,99,235,0.12)", line=dict(width=0),
+                                 name="95% MC-dropout interval"))
     fig.add_vrect(x0=res["test_dates"][0], x1=res["test_dates"][-1], fillcolor=GREEN,
                   opacity=0.06, line_width=0, annotation_text="Hold-out (test)",
                   annotation_position="top left")
@@ -241,6 +266,12 @@ def chart_volatility(res, height=380):
                              line=dict(color=ACCENT, width=2)))
     fig.add_trace(go.Scatter(x=res["test_dates"], y=res["test_pred"], name="Predicted volatility",
                              line=dict(color=GREEN, width=2, dash="dash")))
+    if res.get("band_lo"):
+        fig.add_trace(go.Scatter(x=res["test_dates"], y=res["band_hi"], line=dict(width=0),
+                                 showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=res["test_dates"], y=res["band_lo"], fill="tonexty",
+                                 fillcolor="rgba(37,99,235,0.12)", line=dict(width=0),
+                                 name="95% MC-dropout interval"))
     return _layout(fig, height, "Realized volatility — actual vs predicted")
 
 
@@ -448,6 +479,29 @@ def main():
     dcol[0].plotly_chart(chart_scatter(res), width='stretch')
     dcol[1].plotly_chart(chart_residuals(res), width='stretch')
 
+    if res.get('backtest'):
+        st.divider()
+        st.markdown('<div class="sec">💰 Strategy backtest (long/flat, after costs)</div>', unsafe_allow_html=True)
+        bt = res['backtest']
+        bc = st.columns(3)
+        bc[0].metric('Strategy return', f"{bt['ret_strategy']*100:+.1f}%",
+                     f"{(bt['ret_strategy']-bt['ret_buyhold'])*100:+.1f}% vs B&H")
+        bc[1].metric('Buy & hold return', f"{bt['ret_buyhold']*100:+.1f}%")
+        bc[2].metric('Strategy Sharpe', f"{bt['sharpe_strategy']:.2f}", f"B&H {bt['sharpe_buyhold']:.2f}")
+        efig = go.Figure()
+        efig.add_trace(go.Scatter(x=res['test_dates'], y=bt['eq_strategy'], name='Strategy', line=dict(color=ACCENT, width=2)))
+        efig.add_trace(go.Scatter(x=res['test_dates'], y=bt['eq_buyhold'], name='Buy & hold', line=dict(color=MUTED, width=2, dash='dash')))
+        st.plotly_chart(_layout(efig, 340, 'Equity curve (1 unit grows to...)'), width='stretch')
+        st.caption('Honest note: any edge here usually vanishes after realistic costs — that is the point.')
+
+    st.divider()
+    st.markdown('<div class="sec">📉 Rolling Information Coefficient</div>', unsafe_allow_html=True)
+    ric = rolling_ic(res['true_ret'], res['pred_ret'], window=21)
+    rfig = go.Figure(go.Scatter(x=res['test_dates'], y=ric, mode='lines', line=dict(color=ACCENT, width=2)))
+    rfig.add_hline(y=0, line=dict(color=MUTED, dash='dot'))
+    st.plotly_chart(_layout(rfig, 300, '21-day rolling IC'), width='stretch')
+    st.caption('IC ~0 that flips sign over time = no persistent edge.')
+
     st.divider()
     st.markdown('<div class="sec">⚖️ Horizon comparison (1-day vs 5-day)</div>', unsafe_allow_html=True)
     if st.button("Run 1-day vs 5-day comparison"):
@@ -498,6 +552,25 @@ def main():
             cc[1].caption("Both recalls > 0 = balancing worked; AUC ~0.5 = little directional signal.")
     else:
         st.caption("Click to train the balanced up/down classifier and see its confusion matrix.")
+
+    st.divider()
+    st.markdown('<div class="sec">🌐 Multi-ticker robustness</div>', unsafe_allow_html=True)
+    picks = st.multiselect('Tickers to scan', POPULAR, default=['AAPL', 'MSFT', 'GOOGL', 'RELIANCE.NS'])
+    if st.button('Run multi-ticker scan'):
+        st.session_state['multi'] = True
+        st.session_state['multi_picks'] = tuple(picks)
+    if st.session_state.get('multi') and st.session_state.get('multi_picks'):
+        with st.spinner('Training a model per ticker...'):
+            rows = run_multi_ticker(st.session_state['multi_picks'], p['start'],
+                                    p['horizon'], p['lookback'], p['epochs'], p['target_mode'])
+        dfm = pd.DataFrame(rows)
+        mc = st.columns([1, 1])
+        mc[0].plotly_chart(chart_bar(dfm['ticker'].tolist(), dfm['IC'].tolist(),
+                           color_by_sign=True, title='IC by ticker', ylab='IC'), width='stretch')
+        mc[1].dataframe(dfm.round(3), width='stretch', hide_index=True)
+        st.caption('Near-zero, sign-flipping IC across tickers = the no-signal finding is robust.')
+    else:
+        st.caption('Pick a few tickers and scan to see the finding hold across stocks.')
 
     st.divider()
     st.markdown('<div class="sec">🔬 Feature importance</div>', unsafe_allow_html=True)
